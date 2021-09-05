@@ -2,16 +2,30 @@ package graphqlws
 
 import (
 	"net/http"
-	"sync"
 
 	"github.com/gorilla/websocket"
 	log "github.com/sirupsen/logrus"
 )
 
+// CustomEventHandlers define the custom event handlers for a connection
+type CustomEventHandlers struct {
+	// Close is called whenever the connection is closed and before standart handler,
+	// regardless of whether this happens because of an error or a deliberate termination
+	// by the client.
+	Close func(Connection)
+
+	// NewSubscription is called whenever the new subscription added
+	NewSubscription func(*Subscription, []error)
+
+	// StopSubscription is called whenever the subscription stopped and pass it's id
+	StopSubscription func(string)
+}
+
 // HandlerConfig stores the configuration of a GraphQL WebSocket handler.
 type HandlerConfig struct {
 	SubscriptionManager SubscriptionManager
 	Authenticate        AuthenticateFunc
+	EventHandlers       CustomEventHandlers
 }
 
 // NewHandler creates a WebSocket handler for GraphQL WebSocket connections.
@@ -30,7 +44,6 @@ func NewHandler(config HandlerConfig) http.Handler {
 
 	// Create a map (used like a set) to manage client connections
 	var connections = make(map[Connection]bool)
-	connlock := sync.Mutex{}
 
 	return http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
@@ -60,10 +73,12 @@ func NewHandler(config HandlerConfig) http.Handler {
 							"user": conn.User(),
 						}).Debug("Closing connection")
 
+						if config.EventHandlers.Close != nil {
+							config.EventHandlers.Close(conn)
+						}
+
 						subscriptionManager.RemoveSubscriptions(conn)
 
-						connlock.Lock()
-						defer connlock.Unlock()
 						delete(connections, conn)
 					},
 					StartOperation: func(
@@ -76,8 +91,7 @@ func NewHandler(config HandlerConfig) http.Handler {
 							"op":   opID,
 							"user": conn.User(),
 						}).Debug("Start operation")
-
-						return subscriptionManager.AddSubscription(conn, &Subscription{
+						subscription := &Subscription{
 							ID:            opID,
 							Query:         data.Query,
 							Variables:     data.Variables,
@@ -86,18 +100,26 @@ func NewHandler(config HandlerConfig) http.Handler {
 							SendData: func(data *DataMessagePayload) {
 								conn.SendData(opID, data)
 							},
-						})
+						}
+						errs := subscriptionManager.AddSubscription(conn, subscription)
+
+						if config.EventHandlers.NewSubscription != nil {
+							config.EventHandlers.NewSubscription(subscription, errs)
+						}
+
+						return errs
 					},
 					StopOperation: func(conn Connection, opID string) {
 						subscriptionManager.RemoveSubscription(conn, &Subscription{
 							ID: opID,
 						})
+
+						if config.EventHandlers.StopSubscription != nil {
+							config.EventHandlers.StopSubscription(opID)
+						}
 					},
 				},
 			})
-
-			connlock.Lock()
-			defer connlock.Unlock()
 			connections[conn] = true
 		},
 	)
