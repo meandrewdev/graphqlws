@@ -1,4 +1,4 @@
-module github.com/meandredev/graphqlws
+module github.com/meandrewdev/graphqlws
 
 go 1.17
 
@@ -7,7 +7,6 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/gorilla/websocket v1.4.2
 	github.com/graphql-go/graphql v0.8.0
-	github.com/meandrewdev/graphqlws v0.0.0-20200611113535-7bc58903ce7b
 	github.com/sirupsen/logrus v1.8.1
 	github.com/x-cray/logrus-prefixed-formatter v0.5.2
 )
